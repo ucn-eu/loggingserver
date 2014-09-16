@@ -3,6 +3,7 @@
 =======
 i# Byte-compiled / optimized / DLL files
 >>>>>>> b6f6b7ff715ac9ebb4ad5531b09139935c698348
+config.py
 __pycache__/
 *.py[cod]
 
