@@ -1,0 +1,277 @@
+make sure ipforwarding is on:
+
+sudo sysctl -w net.ipv4.ip_forward=1
+
+to make this permanent, do:
+
+sudo sysctl -w net.ipv4.ip_forward=1
+
+sudo iptables --list
+
+IP TABLES FOR OPENVPN / PROXY
+
+Chain INPUT (policy ACCEPT)
+target     prot opt source               destination         
+
+Chain FORWARD (policy ACCEPT)
+target     prot opt source               destination         
+
+Chain OUTPUT (policy ACCEPT)
+target     prot opt source               destination  
+
+post and prerouting
+
+sudo iptables -L -t nat --line-numbers --verbose
+
+Chain PREROUTING (policy ACCEPT 133 packets, 8041 bytes)
+num   pkts bytes target     prot opt in     out     source               destination         
+1       76  4560 REDIRECT   tcp  --  tun+   any     anywhere             ec2-54-195-252-247.eu-west-1.compute.amazonaws.com  tcp dpt:http redir ports 8000
+2     3860  244K DNAT       tcp  --  tun+   any     anywhere             anywhere             tcp dpt:http to:10.8.0.1:3128
+3    77216 4734K DNAT       tcp  --  tun+   any     anywhere             anywhere             tcp dpt:https to:10.8.0.1:3129
+4     5373  279K REDIRECT   tcp  --  eth0   any     anywhere             anywhere             tcp dpt:http redir ports 3128
+
+Chain INPUT (policy ACCEPT 345 packets, 20586 bytes)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain OUTPUT (policy ACCEPT 554 packets, 38229 bytes)
+num   pkts bytes target     prot opt in     out     source               destination         
+
+Chain POSTROUTING (policy ACCEPT 554 packets, 38229 bytes)
+num   pkts bytes target     prot opt in     out     source               destination         
+1    53940 3690K MASQUERADE  all  --  any    eth0    ip-10-8-0-0.eu-west-1.compute.internal/24  anywhere           
+
+These are set up with the following commands:
+
+sudo iptables -t nat -A POSTROUTING -s 10.8.0.1/24 -o eth0 -j MASQUERADE  
+sudo iptables -t nat -A PREROUTING -i tun+ -p tcp --dport 80 -j DNAT --to 10.8.0.1:3128
+sudo iptables -t nat -A PREROUTING -i tun+ -p tcp --dport 443 -j DNAT --to 10.8.0.1:3129
+sudo iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 80 -j REDIRECT --to-port 3128
+
+#following is required to prevent forwarding loops - passes all direct requests to the webserver through to port 8000
+#which is where it is listening
+sudo iptables -t nat -I PREROUTING -i tun+ -p tcp --dport 80 -d 54.195.252.247 -j REDIRECT --to-port 8000
+
+To delete stuff in iptables
+
+sudo iptables --flush
+
+To delete stuff in nat iptables:
+
+sudo iptables -t nat -D [PREROUTING | POSTROUTING] X
+
+where X is line number
+
+TO PERSIST THE IP TABLES
+
+sudo apt-get install iptables-persistent
+
+sudo /etc/init.d/iptables-persistent save
+
+
+Building new version of squid
+------------------------------
+
+apt-get install build-essential
+sudo aptitude build-dep squid3
+wget http://www.squid-cache.org/Versions/v3/3.4/squid-3.4.2.tar.bz2
+bzip2 -d ./squid-3.4.2.tar.bz2
+tar -xvf ./squid-3.4.2.tar
+cd squid-3.4.2
+./bootstrap.sh
+./configure --enable-ssl --enable-ipf-transparent --enable-linux-netfilter --disable-ipv6 --disable-translation --disable-auto-locale --enable-ssl-crtd
+
+or
+
+./configure --enable-ssl --with-openssl=/usr/local/ssl/include --enable-ipf-transparent --enable-linux-netfilter --disable-ipv6 --disable-translation --disable-auto-locale --enable-ssl-crtd
+
+make all
+make install (install in /usr/local/squid/ by default)
+
+initialisation of ssl-crtd DB
+mkdir -p /usr/local/squid/var/lib
+/usr/local/squid/libexec/ssl_crtd -c -s /usr/local/squid/var/lib/ssl_db
+
+
+Useful lines from the sqid.conf (all these are needed I think)
+
+acl SSL_ports port 443
+acl CONNECT method CONNECT
+http_access allow manager localhost
+http_access deny manager
+http_access allow all
+http_port 3128 transparent
+coredump_dir /var/spool/squid3
+always_direct allow all
+https_port 3129 transparent generate-host-certificates=on dynamic_cert_mem_cache_size=4MB cert=/usr/local/squid/ssl_cert/myCA.pem ssl-bump
+sslproxy_cert_error allow all
+sslproxy_flags DONT_VERIFY_PEER
+ssl_bump server-first all
+strip_query_terms off #leaves the query string in the squid logs
+sslcrtd_program /usr/local/squid/libexec/ssl_crtd -s /usr/local/squid/var/lib/ssl_db -M 4MB
+sslcrtd_children 5
+
+
+Note if you get issues with writing to log files - squid runs a user nobody, so you may need to:
+
+ sudo groupadd nobody
+ sudo chown -R nobody:nobody /usr/local/squid/var
+
+
+CREATING SQUID SELF_SIGNED CERT
+-------------------------------
+
+cd /usr/local/squid
+mkdir ssl_cert
+cd ssl_cert
+
+openssl req -new -newkey rsa:1024 -days 365 -nodes -x509 -keyout myCA.pem -out myCA.pem
+
+and a DER encoded version (for importing into browsers)
+
+openssl x509 -in myCA.pem -outform DER -out myCA.der
+
+
+
+
+CREATING CERTS ETC ON VPN SERVER
+--------------------------------
+git clone https://github.com/OpenVPN/easy-rsa.git
+cd easy-rsa/
+cd easyrsa3/ 
+cp vars.example vars (not sure if this is needed)
+sudo ./easyrsa init-pki
+sudo ./easyrsa build-ca nopass
+sudo ./easyrsa build-server-full server nopass
+sudo ./easyrsa build-client-full client1 nopass
+sudo ./easyrsa gen-dh
+
+
+now copy them to a dir to be pointed to by openvpn conf
+mkdir ~/.vpnauth
+sudo su -
+cp /home/ubuntu/easy-rsa/easyrsa3/ca.crt /home/ubuntu/.vpnauth
+cp /home/ubuntu/easy-rsa/easyrsa3/dh.pem /home/ubuntu/.vpnauth
+cp /home/ubuntu/easy-rsa/easyrsa3/issued/server.crt /home/ubuntu/.vpnauth
+cp /home/ubuntu/easy-rsa/easyrsa3/private/server.key /home/ubuntu/.vpnauth
+cp /usr/local/squid
+
+
+OPENVPN CONF FILE
+-----------------
+tls-server
+dev tun
+
+# Configure server mode and supply a VPN subnet
+# for openVPN to draw client addresses from
+# The server will take the address 10.8.0.1 for itself
+# Each client will be able to reach the server
+# on 10.8.0.1
+
+server 10.8.0.0 255.255.255.0
+topology subnet
+
+# maintain list of client - vritual ip addresses
+ifconfig-pool-persist ipp.txt
+
+# certificate stuff
+
+ca /home/ubuntu/.vpnauth/ca.crt
+cert /home/ubuntu/.vpnauth/server.crt
+key /home/ubuntu/.vpnauth/server.key
+dh /home/ubuntu/.vpnauth/dh.pem
+
+# other settings
+comp-lzo
+keepalive 10 60
+ping-timer-rem
+persist-tun
+persist-key
+port 443
+proto tcp-server
+status server-tcp.log
+#duplicate-cn
+push "dhcp-option DNS 8.8.8.8"
+push "redirect-gateway"
+#client-config-dir /etc/openvpn/staticclients
+
+
+and ipp.txt
+
+client1,10.8.0.3
+client2,10.8.0.4
+client3,10.8.0.5
+
+
+
+Starting stuff
+----------------
+
+openvpn:
+sudo openvpn /etc/openvpn/openvpn.conf (to check all works)
+or sudo service openvpn start
+
+squid:
+sudo /usr/local/squid/sbin/squid
+
+and if created service file:
+sudo service squid3 start
+
+And  client (viscosity details)
+
+General
+-------
+
+Address: 54.195.252.247
+Port: 443
+Protocol: TCP
+Device: tun
+
+Authentication
+--------------
+
+SSL/TLS Client
+fill in the CA cert, client cert and client key
+
+Options
+--------
+
+Persist Tun
+Persist Key
+LZO Compression On(Adaptive)
+No Bind
+
+
+Networking
+----------
+
+[None]
+
+Enable DNS Support
+
+DNS Servers 8.8.8.8, 8.8.4.4
+
+Advanced (add to text box at end)
+
+verb 3
+tls-client
+
+
+
+Notes on testing:  Check that when the connection is started, the appropriate gateway is added to routoing table:
+
+netstat -rn  should have a line:
+
+Destination        Gateway            Flags        Refs      Use   Netif Expire
+0/1                10.8.0.1           UGSc            6        0    tun0
+
+and ifconfig -a
+
+tun0: flags=8851<UP,POINTOPOINT,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+	inet 10.8.0.2 --> 10.8.0.1 netmask 0xffffffff 
+	open (pid 30898)
+
+
+check that the packets are hitting the vpn server:
+
+
+
