@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 # Byte-compiled / optimized / DLL files
+=======
+i# Byte-compiled / optimized / DLL files
+>>>>>>> b6f6b7ff715ac9ebb4ad5531b09139935c698348
 __pycache__/
 *.py[cod]
 
@@ -52,5 +56,8 @@ coverage.xml
 
 # Sphinx documentation
 docs/_build/
+<<<<<<< HEAD
 
 
+=======
+>>>>>>> b6f6b7ff715ac9ebb4ad5531b09139935c698348
