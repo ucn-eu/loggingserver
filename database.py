@@ -21,6 +21,13 @@ class AuthDB(object):
 		self.conn.execute("INSERT INTO TOKENS(host, token) VALUES(?,?)", (host, token))
 		self.conn.commit()
 	
+	def fetch_tokens(self):
+		if self.connected is not True:
+			self.connect()
+		result = self.conn.execute("SELECT token, host FROM TOKENS")
+		
+		return [{"token":row[0], "host":row[1]} for row in result]
+		
 	def fetch_token_for_host(self, host):
 		if self.connected is not True:
 			self.connect()
@@ -39,6 +46,6 @@ class AuthDB(object):
 			(id INTEGER PRIMARY KEY AUTOINCREMENT,
 			host CHAR(16),
 			token CHAR(255),
-			UNIQUE(host, token) ON CONFLICT REPLACE);''')	
+			UNIQUE(host) ON CONFLICT REPLACE);''')	
 		self.conn.commit()
 	
